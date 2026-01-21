@@ -16,13 +16,19 @@ class FormField:
     page_num: int
     max_chars: int = 0  # For comb fields
     options: List[str] = None  # For radio buttons
+    # Appearance properties
+    border_color: Tuple[float, float, float] = (0, 0, 0)  # RGB 0-1
+    fill_color: Tuple[float, float, float] = (1, 1, 1)  # RGB 0-1
+    border_width: float = 1.0
+    font_size: float = 12.0
+    font_color: Tuple[float, float, float] = (0, 0, 0)  # RGB 0-1
 
 
 class PDFFormBuilder:
     def __init__(self, root):
         self.root = root
         self.root.title("PDF Form Builder")
-        self.root.geometry("1200x800")
+        self.root.geometry("1400x800")
 
         self.pdf_doc = None
         self.current_page = 0
@@ -30,6 +36,7 @@ class PDFFormBuilder:
         self.current_field_type = "text"
         self.selection_start = None
         self.temp_rect = None
+        self.selected_field_idx = None
 
         self.setup_ui()
 
@@ -44,9 +51,6 @@ class PDFFormBuilder:
         ttk.Button(toolbar, text="Save Form PDF", command=self.save_form_pdf).pack(
             side=tk.LEFT, padx=2
         )
-        ttk.Button(
-            toolbar, text="Recognize Fields", command=self.recognize_fields
-        ).pack(side=tk.LEFT, padx=2)
 
         # Page navigation
         ttk.Label(toolbar, text="Page:").pack(side=tk.LEFT, padx=(20, 2))
@@ -105,7 +109,7 @@ class PDFFormBuilder:
         instructions.pack(padx=10, pady=5)
         instructions.insert(
             "1.0",
-            "1. Open a PDF file\n2. Select field type\n3. Click and drag on PDF to create field\n4. Fields will be added at mouse release\n5. Save to create fillable PDF",
+            "1. Open a PDF file\n2. Select field type\n3. Click and drag on PDF to create field\n4. Select field from list to customize\n5. Save to create fillable PDF",
         )
         instructions.config(state=tk.DISABLED)
 
@@ -136,31 +140,155 @@ class PDFFormBuilder:
         self.canvas.bind("<B1-Motion>", self.on_mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_mouse_release)
 
-        # Right panel - Fields list
-        right_panel = ttk.LabelFrame(main_container, text="Form Fields", width=250)
+        # Right panel - Fields list and properties
+        right_panel = ttk.Frame(main_container, width=350)
         right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
         right_panel.pack_propagate(False)
 
-        # Fields listbox
-        list_frame = ttk.Frame(right_panel)
+        # Fields list
+        fields_frame = ttk.LabelFrame(right_panel, text="Form Fields")
+        fields_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        list_frame = ttk.Frame(fields_frame)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        self.fields_listbox = tk.Listbox(list_frame)
+        self.fields_listbox = tk.Listbox(list_frame, height=8)
         list_scroll = ttk.Scrollbar(
             list_frame, orient=tk.VERTICAL, command=self.fields_listbox.yview
         )
         self.fields_listbox.configure(yscrollcommand=list_scroll.set)
+        self.fields_listbox.bind("<<ListboxSelect>>", self.on_field_select)
 
         list_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.fields_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # Field operations
-        ttk.Button(right_panel, text="Delete Selected", command=self.delete_field).pack(
-            fill=tk.X, padx=5, pady=2
+        btn_frame = ttk.Frame(fields_frame)
+        btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Button(btn_frame, text="Delete Selected", command=self.delete_field).pack(
+            side=tk.LEFT, padx=2
         )
-        ttk.Button(right_panel, text="Clear All", command=self.clear_all_fields).pack(
-            fill=tk.X, padx=5, pady=2
+        ttk.Button(btn_frame, text="Clear All", command=self.clear_all_fields).pack(
+            side=tk.LEFT, padx=2
         )
+
+        # Properties panel
+        props_frame = ttk.LabelFrame(right_panel, text="Field Properties")
+        props_frame.pack(fill=tk.BOTH, padx=5, pady=5)
+
+        # Create scrollable frame for properties
+        props_canvas = tk.Canvas(props_frame, height=300)
+        props_scrollbar = ttk.Scrollbar(
+            props_frame, orient=tk.VERTICAL, command=props_canvas.yview
+        )
+        scrollable_frame = ttk.Frame(props_canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: props_canvas.configure(scrollregion=props_canvas.bbox("all")),
+        )
+
+        props_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        props_canvas.configure(yscrollcommand=props_scrollbar.set)
+
+        props_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        props_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Field Name
+        ttk.Label(scrollable_frame, text="Field Name:", font=("Arial", 9, "bold")).grid(
+            row=0, column=0, sticky=tk.W, padx=5, pady=5
+        )
+        self.field_name_var = tk.StringVar()
+        name_entry = ttk.Entry(
+            scrollable_frame, textvariable=self.field_name_var, width=20
+        )
+        name_entry.grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
+        ttk.Button(
+            scrollable_frame, text="Update", command=self.update_field_name
+        ).grid(row=0, column=2, padx=5)
+
+        # Border Width
+        ttk.Label(
+            scrollable_frame, text="Border Width:", font=("Arial", 9, "bold")
+        ).grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        self.border_width_var = tk.StringVar(value="1.0")
+        ttk.Spinbox(
+            scrollable_frame,
+            from_=0,
+            to=10,
+            increment=0.5,
+            textvariable=self.border_width_var,
+            width=10,
+            command=self.update_field_appearance,
+        ).grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
+
+        # Font Size
+        ttk.Label(scrollable_frame, text="Font Size:", font=("Arial", 9, "bold")).grid(
+            row=2, column=0, sticky=tk.W, padx=5, pady=5
+        )
+        self.font_size_var = tk.StringVar(value="12")
+        ttk.Spinbox(
+            scrollable_frame,
+            from_=6,
+            to=72,
+            increment=1,
+            textvariable=self.font_size_var,
+            width=10,
+            command=self.update_field_appearance,
+        ).grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
+
+        # Border Color
+        ttk.Label(
+            scrollable_frame, text="Border Color:", font=("Arial", 9, "bold")
+        ).grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
+        self.border_color_btn = tk.Button(
+            scrollable_frame,
+            text="Choose",
+            command=lambda: self.choose_color("border"),
+            width=10,
+            bg="black",
+        )
+        self.border_color_btn.grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
+
+        # Fill Color
+        ttk.Label(scrollable_frame, text="Fill Color:", font=("Arial", 9, "bold")).grid(
+            row=4, column=0, sticky=tk.W, padx=5, pady=5
+        )
+        self.fill_color_btn = tk.Button(
+            scrollable_frame,
+            text="Choose",
+            command=lambda: self.choose_color("fill"),
+            width=10,
+            bg="white",
+        )
+        self.fill_color_btn.grid(row=4, column=1, sticky=tk.W, padx=5, pady=5)
+
+        # Font Color
+        ttk.Label(scrollable_frame, text="Font Color:", font=("Arial", 9, "bold")).grid(
+            row=5, column=0, sticky=tk.W, padx=5, pady=5
+        )
+        self.font_color_btn = tk.Button(
+            scrollable_frame,
+            text="Choose",
+            command=lambda: self.choose_color("font"),
+            width=10,
+            bg="black",
+        )
+        self.font_color_btn.grid(row=5, column=1, sticky=tk.W, padx=5, pady=5)
+
+        # Apply button
+        ttk.Button(
+            scrollable_frame, text="Apply Changes", command=self.update_field_appearance
+        ).grid(row=6, column=0, columnspan=3, pady=10, padx=5, sticky=tk.EW)
+
+        # Info label
+        self.info_label = ttk.Label(
+            scrollable_frame,
+            text="Select a field to customize",
+            foreground="gray",
+            wraplength=300,
+        )
+        self.info_label.grid(row=7, column=0, columnspan=3, pady=10, padx=5)
 
     def on_field_type_change(self):
         self.current_field_type = self.field_type_var.get()
@@ -174,6 +302,7 @@ class PDFFormBuilder:
                 self.pdf_doc = fitz.open(filename)
                 self.current_page = 0
                 self.fields = []
+                self.selected_field_idx = None
                 self.page_label.config(text=f"/ {len(self.pdf_doc)}")
                 self.render_page()
                 self.update_fields_list()
@@ -233,8 +362,17 @@ class PDFFormBuilder:
                 }
                 color = colors.get(field.field_type, "blue")
 
+                # Highlight selected field
+                width = 3 if i == self.selected_field_idx else 2
+
                 self.canvas.create_rectangle(
-                    x0_c, y0_c, x1_c, y1_c, outline=color, width=2, tags=f"field_{i}"
+                    x0_c,
+                    y0_c,
+                    x1_c,
+                    y1_c,
+                    outline=color,
+                    width=width,
+                    tags=f"field_{i}",
                 )
 
     def on_mouse_press(self, event):
@@ -304,6 +442,95 @@ class PDFFormBuilder:
         self.render_page()
         self.update_fields_list()
 
+    def on_field_select(self, event):
+        """Handle field selection from listbox"""
+        selection = self.fields_listbox.curselection()
+        if selection:
+            self.selected_field_idx = selection[0]
+            field = self.fields[self.selected_field_idx]
+
+            # Update property controls
+            self.field_name_var.set(field.name)
+            self.border_width_var.set(str(field.border_width))
+            self.font_size_var.set(str(field.font_size))
+
+            # Update color buttons
+            self.border_color_btn.config(bg=self.rgb_to_hex(field.border_color))
+            self.fill_color_btn.config(bg=self.rgb_to_hex(field.fill_color))
+            self.font_color_btn.config(bg=self.rgb_to_hex(field.font_color))
+
+            self.info_label.config(text=f"Editing: {field.name} ({field.field_type})")
+
+            # Redraw to highlight selected field
+            self.render_page()
+
+    def update_field_name(self):
+        """Update the name of the selected field"""
+        if self.selected_field_idx is not None:
+            new_name = self.field_name_var.get().strip()
+            if new_name:
+                self.fields[self.selected_field_idx].name = new_name
+                self.update_fields_list()
+                self.info_label.config(text=f"Field name updated to: {new_name}")
+            else:
+                messagebox.showwarning("Invalid Name", "Field name cannot be empty")
+
+    def update_field_appearance(self):
+        """Update the appearance properties of the selected field"""
+        if self.selected_field_idx is not None:
+            field = self.fields[self.selected_field_idx]
+
+            try:
+                field.border_width = float(self.border_width_var.get())
+                field.font_size = float(self.font_size_var.get())
+
+                self.info_label.config(text=f"Appearance updated for: {field.name}")
+            except ValueError:
+                messagebox.showwarning(
+                    "Invalid Value", "Please enter valid numeric values"
+                )
+
+    def choose_color(self, color_type):
+        """Open color chooser dialog"""
+        if self.selected_field_idx is None:
+            messagebox.showinfo("No Selection", "Please select a field first")
+            return
+
+        from tkinter import colorchooser
+
+        field = self.fields[self.selected_field_idx]
+
+        # Get current color
+        if color_type == "border":
+            current = self.rgb_to_hex(field.border_color)
+        elif color_type == "fill":
+            current = self.rgb_to_hex(field.fill_color)
+        else:  # font
+            current = self.rgb_to_hex(field.font_color)
+
+        # Open color chooser
+        color = colorchooser.askcolor(
+            initialcolor=current, title=f"Choose {color_type} color"
+        )
+
+        if color[0]:  # color[0] is RGB tuple (0-255)
+            rgb_normalized = tuple(c / 255.0 for c in color[0])
+
+            if color_type == "border":
+                field.border_color = rgb_normalized
+                self.border_color_btn.config(bg=color[1])
+            elif color_type == "fill":
+                field.fill_color = rgb_normalized
+                self.fill_color_btn.config(bg=color[1])
+            else:  # font
+                field.font_color = rgb_normalized
+                self.font_color_btn.config(bg=color[1])
+
+    def rgb_to_hex(self, rgb):
+        """Convert RGB tuple (0-1) to hex color string"""
+        r, g, b = [int(c * 255) for c in rgb]
+        return f"#{r:02x}{g:02x}{b:02x}"
+
     def update_fields_list(self):
         self.fields_listbox.delete(0, tk.END)
         for i, field in enumerate(self.fields):
@@ -316,14 +543,18 @@ class PDFFormBuilder:
         if selection:
             idx = selection[0]
             del self.fields[idx]
+            self.selected_field_idx = None
             self.update_fields_list()
             self.render_page()
+            self.info_label.config(text="Select a field to customize")
 
     def clear_all_fields(self):
         if messagebox.askyesno("Confirm", "Delete all fields?"):
             self.fields = []
+            self.selected_field_idx = None
             self.update_fields_list()
             self.render_page()
+            self.info_label.config(text="Select a field to customize")
 
     def go_to_page(self):
         try:
@@ -337,18 +568,6 @@ class PDFFormBuilder:
                 )
         except ValueError:
             messagebox.showwarning("Invalid Input", "Please enter a valid page number")
-
-    def recognize_fields(self):
-        """Automatically recognize potential form fields in the PDF"""
-        if not self.pdf_doc:
-            messagebox.showwarning("No PDF", "Please open a PDF first")
-            return
-
-        messagebox.showinfo(
-            "Auto-Recognition",
-            "This feature would use OCR/pattern recognition to detect form fields.\n\n"
-            + "For now, please manually create fields by selecting type and drawing rectangles.",
-        )
 
     def save_form_pdf(self):
         if not self.pdf_doc or not self.fields:
@@ -373,9 +592,12 @@ class PDFFormBuilder:
                     widget = fitz.Widget()
                     widget.field_name = field.name
                     widget.rect = fitz.Rect(field.rect)
-                    widget.border_width = 1
-                    widget.border_color = (0, 0, 0)
-                    widget.fill_color = (1, 1, 1)
+                    widget.border_width = field.border_width
+                    widget.border_color = field.border_color
+                    widget.fill_color = field.fill_color
+                    widget.text_font = "helv"
+                    widget.text_fontsize = field.font_size
+                    widget.text_color = field.font_color
 
                     if field.field_type == "text":
                         widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
