@@ -304,6 +304,11 @@ class PDFFormBuilder:
                 self.fields = []
                 self.selected_field_idx = None
                 self.page_label.config(text=f"/ {len(self.pdf_doc)}")
+
+                # Automatically detect existing fields
+                self.detect_existing_fields()
+
+                # Render page (will be called again in detect_existing_fields, but that's okay)
                 self.render_page()
                 self.update_fields_list()
             except Exception as e:
@@ -555,6 +560,160 @@ class PDFFormBuilder:
             self.update_fields_list()
             self.render_page()
             self.info_label.config(text="Select a field to customize")
+
+    def detect_existing_fields(self):
+        """Detect and load existing form fields from the PDF"""
+        if not self.pdf_doc:
+            return
+
+        try:
+            detected_count = 0
+
+            # Progress dialog
+            progress_window = tk.Toplevel(self.root)
+            progress_window.title("Detecting Fields")
+            progress_window.geometry("400x150")
+            progress_window.transient(self.root)
+            progress_window.grab_set()
+
+            ttk.Label(
+                progress_window,
+                text="Scanning PDF for form fields...",
+                font=("Arial", 10),
+            ).pack(pady=20)
+            progress_bar = ttk.Progressbar(
+                progress_window, length=350, mode="determinate"
+            )
+            progress_bar.pack(pady=10)
+            status_label = ttk.Label(progress_window, text="")
+            status_label.pack(pady=10)
+
+            progress_window.update()
+
+            total_pages = len(self.pdf_doc)
+            progress_bar["maximum"] = total_pages
+
+            for page_num in range(total_pages):
+                status_label.config(
+                    text=f"Processing page {page_num + 1} of {total_pages}..."
+                )
+                progress_bar["value"] = page_num + 1
+                progress_window.update()
+
+                page = self.pdf_doc[page_num]
+
+                # Get all widgets (form fields) on the page
+                widgets = page.widgets()
+
+                for widget in widgets:
+                    try:
+                        # Extract widget properties
+                        field_name = widget.field_name or f"field_{detected_count + 1}"
+                        field_rect = widget.rect
+
+                        # Determine field type
+                        field_type = self._get_field_type_from_widget(widget)
+
+                        # Extract appearance properties
+                        border_color = (
+                            widget.border_color if widget.border_color else (0, 0, 0)
+                        )
+                        fill_color = (
+                            widget.fill_color if widget.fill_color else (1, 1, 1)
+                        )
+                        border_width = (
+                            widget.border_width if widget.border_width else 1.0
+                        )
+                        font_size = (
+                            widget.text_fontsize if widget.text_fontsize else 12.0
+                        )
+                        font_color = (
+                            widget.text_color if widget.text_color else (0, 0, 0)
+                        )
+
+                        # Get max chars for comb fields
+                        max_chars = 0
+                        if widget.field_type == fitz.PDF_WIDGET_TYPE_TEXT:
+                            max_chars = widget.text_maxlen or 0
+
+                        # Create FormField object
+                        field = FormField(
+                            field_type=field_type,
+                            rect=(
+                                field_rect.x0,
+                                field_rect.y0,
+                                field_rect.x1,
+                                field_rect.y1,
+                            ),
+                            name=field_name,
+                            page_num=page_num,
+                            max_chars=max_chars,
+                            border_color=border_color,
+                            fill_color=fill_color,
+                            border_width=border_width,
+                            font_size=font_size,
+                            font_color=font_color,
+                        )
+
+                        self.fields.append(field)
+                        detected_count += 1
+
+                    except Exception as e:
+                        print(f"Error processing widget: {str(e)}")
+                        continue
+
+            progress_window.destroy()
+
+            if detected_count > 0:
+                self.update_fields_list()
+                self.render_page()
+                messagebox.showinfo(
+                    "Fields Detected",
+                    f"Found {detected_count} existing form field(s).\n\n"
+                    + "You can edit their properties or add new fields.",
+                    parent=self.root,
+                )
+            # If no fields detected, don't show any message - user can just start creating fields
+
+        except Exception as e:
+            print(f"Field detection error: {str(e)}")
+            # Don't show error dialog - just continue without loading fields
+
+    def _get_field_type_from_widget(self, widget):
+        """Determine our field type from PyMuPDF widget type"""
+        widget_type = widget.field_type
+
+        if widget_type == fitz.PDF_WIDGET_TYPE_TEXT:
+            # Check for multiline or comb flags
+            field_flags = widget.field_flags if hasattr(widget, "field_flags") else 0
+
+            if field_flags & fitz.PDF_TX_FIELD_IS_COMB:
+                return "comb"
+            elif field_flags & fitz.PDF_TX_FIELD_IS_MULTILINE:
+                # Distinguish between multiline and textarea based on size
+                rect = widget.rect
+                height = rect.y1 - rect.y0
+                if height > 50:
+                    return "textarea"
+                else:
+                    return "multiline"
+            else:
+                return "text"
+
+        elif widget_type == fitz.PDF_WIDGET_TYPE_CHECKBOX:
+            return "checkbox"
+
+        elif widget_type == fitz.PDF_WIDGET_TYPE_RADIOBUTTON:
+            return "radio"
+
+        elif widget_type == fitz.PDF_WIDGET_TYPE_COMBOBOX:
+            return "text"  # Treat as text field
+
+        elif widget_type == fitz.PDF_WIDGET_TYPE_LISTBOX:
+            return "textarea"  # Treat as text area
+
+        else:
+            return "text"  # Default to text field
 
     def go_to_page(self):
         try:
