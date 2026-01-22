@@ -1,3 +1,5 @@
+import json
+import os
 import tkinter as tk
 from dataclasses import dataclass
 from tkinter import filedialog, messagebox, ttk
@@ -38,6 +40,12 @@ class PDFFormBuilder:
         self.temp_rect = None
         self.selected_field_idx = None
 
+        # Default style settings - will be loaded from config
+        self.config_file = os.path.join(
+            os.path.expanduser("~"), ".pdf_form_builder_config.json"
+        )
+        self.load_default_styles()
+
         self.setup_ui()
 
     def setup_ui(self):
@@ -51,6 +59,12 @@ class PDFFormBuilder:
         ttk.Button(toolbar, text="Save Form PDF", command=self.save_form_pdf).pack(
             side=tk.LEFT, padx=2
         )
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(
+            side=tk.LEFT, fill=tk.Y, padx=10
+        )
+        ttk.Button(
+            toolbar, text="Default Style Settings", command=self.open_style_settings
+        ).pack(side=tk.LEFT, padx=2)
 
         # Page navigation
         ttk.Label(toolbar, text="Page:").pack(side=tk.LEFT, padx=(20, 2))
@@ -438,6 +452,11 @@ class PDFFormBuilder:
             max_chars=int(self.comb_chars_var.get())
             if self.current_field_type == "comb"
             else 0,
+            border_color=self.default_border_color,
+            fill_color=self.default_fill_color,
+            font_color=self.default_font_color,
+            border_width=self.default_border_width,
+            font_size=self.default_font_size,
         )
 
         self.fields.append(field)
@@ -535,6 +554,284 @@ class PDFFormBuilder:
         """Convert RGB tuple (0-1) to hex color string"""
         r, g, b = [int(c * 255) for c in rgb]
         return f"#{r:02x}{g:02x}{b:02x}"
+
+    def load_default_styles(self):
+        """Load default style settings from config file"""
+        default_config = {
+            "border_color": (0, 0, 0),
+            "fill_color": (1, 1, 1),
+            "font_color": (0, 0, 0),
+            "border_width": 1.0,
+            "font_size": 12.0,
+        }
+
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, "r") as f:
+                    config = json.load(f)
+                    self.default_border_color = tuple(
+                        config.get("border_color", default_config["border_color"])
+                    )
+                    self.default_fill_color = tuple(
+                        config.get("fill_color", default_config["fill_color"])
+                    )
+                    self.default_font_color = tuple(
+                        config.get("font_color", default_config["font_color"])
+                    )
+                    self.default_border_width = config.get(
+                        "border_width", default_config["border_width"]
+                    )
+                    self.default_font_size = config.get(
+                        "font_size", default_config["font_size"]
+                    )
+            else:
+                # Use defaults
+                self.default_border_color = default_config["border_color"]
+                self.default_fill_color = default_config["fill_color"]
+                self.default_font_color = default_config["font_color"]
+                self.default_border_width = default_config["border_width"]
+                self.default_font_size = default_config["font_size"]
+        except Exception as e:
+            print(f"Error loading config: {e}")
+            # Use defaults on error
+            self.default_border_color = default_config["border_color"]
+            self.default_fill_color = default_config["fill_color"]
+            self.default_font_color = default_config["font_color"]
+            self.default_border_width = default_config["border_width"]
+            self.default_font_size = default_config["font_size"]
+
+    def save_default_styles(self):
+        """Save default style settings to config file"""
+        try:
+            config = {
+                "border_color": list(self.default_border_color),
+                "fill_color": list(self.default_fill_color),
+                "font_color": list(self.default_font_color),
+                "border_width": self.default_border_width,
+                "font_size": self.default_font_size,
+            }
+            with open(self.config_file, "w") as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            print(f"Error saving config: {e}")
+
+    def open_style_settings(self):
+        """Open dialog to configure default style settings"""
+        settings_window = tk.Toplevel(self.root)
+        settings_window.title("Default Style Settings")
+        settings_window.geometry("450x550")
+        settings_window.transient(self.root)
+        settings_window.grab_set()
+
+        # Make window resizable
+        settings_window.resizable(True, True)
+
+        # Main scrollable frame
+        canvas = tk.Canvas(settings_window)
+        scrollbar = ttk.Scrollbar(
+            settings_window, orient="vertical", command=canvas.yview
+        )
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+        scrollbar.pack(side="right", fill="y")
+
+        main_frame = ttk.Frame(scrollable_frame, padding=20)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            main_frame, text="Default Field Appearance", font=("Arial", 12, "bold")
+        ).pack(pady=(0, 10))
+
+        ttk.Label(
+            main_frame,
+            text="These settings will apply to all new fields you create.",
+            wraplength=350,
+            foreground="gray",
+        ).pack(pady=(0, 20))
+
+        # Settings grid
+        settings_frame = ttk.Frame(main_frame)
+        settings_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 20))
+
+        row = 0
+
+        # Border Width
+        ttk.Label(settings_frame, text="Border Width:", font=("Arial", 9, "bold")).grid(
+            row=row, column=0, sticky=tk.W, pady=10, padx=5
+        )
+        border_width_var = tk.StringVar(value=str(self.default_border_width))
+        ttk.Spinbox(
+            settings_frame,
+            from_=0,
+            to=10,
+            increment=0.5,
+            textvariable=border_width_var,
+            width=15,
+        ).grid(row=row, column=1, sticky=tk.W, padx=10, pady=10)
+        row += 1
+
+        # Font Size
+        ttk.Label(settings_frame, text="Font Size:", font=("Arial", 9, "bold")).grid(
+            row=row, column=0, sticky=tk.W, pady=10, padx=5
+        )
+        font_size_var = tk.StringVar(value=str(self.default_font_size))
+        ttk.Spinbox(
+            settings_frame,
+            from_=6,
+            to=72,
+            increment=1,
+            textvariable=font_size_var,
+            width=15,
+        ).grid(row=row, column=1, sticky=tk.W, padx=10, pady=10)
+        row += 1
+
+        # Border Color
+        ttk.Label(settings_frame, text="Border Color:", font=("Arial", 9, "bold")).grid(
+            row=row, column=0, sticky=tk.W, pady=10, padx=5
+        )
+        border_color_display = tk.Button(
+            settings_frame,
+            text="Choose Color",
+            bg=self.rgb_to_hex(self.default_border_color),
+            width=15,
+            relief=tk.RAISED,
+            bd=2,
+        )
+        border_color_display.grid(row=row, column=1, sticky=tk.W, padx=10, pady=10)
+        border_color_value = [self.default_border_color]
+
+        def choose_border_color():
+            from tkinter import colorchooser
+
+            color = colorchooser.askcolor(
+                initialcolor=self.rgb_to_hex(border_color_value[0]),
+                title="Choose Border Color",
+            )
+            if color[0]:
+                border_color_value[0] = tuple(c / 255.0 for c in color[0])
+                border_color_display.config(bg=color[1])
+
+        border_color_display.config(command=choose_border_color)
+        row += 1
+
+        # Fill Color
+        ttk.Label(settings_frame, text="Fill Color:", font=("Arial", 9, "bold")).grid(
+            row=row, column=0, sticky=tk.W, pady=10, padx=5
+        )
+        fill_color_display = tk.Button(
+            settings_frame,
+            text="Choose Color",
+            bg=self.rgb_to_hex(self.default_fill_color),
+            width=15,
+            relief=tk.RAISED,
+            bd=2,
+        )
+        fill_color_display.grid(row=row, column=1, sticky=tk.W, padx=10, pady=10)
+        fill_color_value = [self.default_fill_color]
+
+        def choose_fill_color():
+            from tkinter import colorchooser
+
+            color = colorchooser.askcolor(
+                initialcolor=self.rgb_to_hex(fill_color_value[0]),
+                title="Choose Fill Color",
+            )
+            if color[0]:
+                fill_color_value[0] = tuple(c / 255.0 for c in color[0])
+                fill_color_display.config(bg=color[1])
+
+        fill_color_display.config(command=choose_fill_color)
+        row += 1
+
+        # Font Color
+        ttk.Label(settings_frame, text="Font Color:", font=("Arial", 9, "bold")).grid(
+            row=row, column=0, sticky=tk.W, pady=10, padx=5
+        )
+        font_color_display = tk.Button(
+            settings_frame,
+            text="Choose Color",
+            bg=self.rgb_to_hex(self.default_font_color),
+            width=15,
+            relief=tk.RAISED,
+            bd=2,
+        )
+        font_color_display.grid(row=row, column=1, sticky=tk.W, padx=10, pady=10)
+        font_color_value = [self.default_font_color]
+
+        def choose_font_color():
+            from tkinter import colorchooser
+
+            color = colorchooser.askcolor(
+                initialcolor=self.rgb_to_hex(font_color_value[0]),
+                title="Choose Font Color",
+            )
+            if color[0]:
+                font_color_value[0] = tuple(c / 255.0 for c in color[0])
+                font_color_display.config(bg=color[1])
+
+        font_color_display.config(command=choose_font_color)
+        row += 1
+
+        # Separator
+        ttk.Separator(main_frame, orient="horizontal").pack(fill="x", pady=10)
+
+        # Buttons frame - fixed at bottom
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(side=tk.BOTTOM, pady=10)
+
+        def save_settings():
+            try:
+                self.default_border_width = float(border_width_var.get())
+                self.default_font_size = float(font_size_var.get())
+                self.default_border_color = border_color_value[0]
+                self.default_fill_color = fill_color_value[0]
+                self.default_font_color = font_color_value[0]
+
+                # Save to config file
+                self.save_default_styles()
+
+                messagebox.showinfo(
+                    "Success",
+                    "Default style settings saved!\n\n"
+                    + "New fields will use these settings.\n"
+                    + "Settings are now persistent.",
+                    parent=settings_window,
+                )
+                settings_window.destroy()
+            except ValueError:
+                messagebox.showwarning(
+                    "Invalid Input",
+                    "Please enter valid numeric values.",
+                    parent=settings_window,
+                )
+
+        def reset_to_defaults():
+            border_width_var.set("1.0")
+            font_size_var.set("12.0")
+            border_color_value[0] = (0, 0, 0)
+            fill_color_value[0] = (1, 1, 1)
+            font_color_value[0] = (0, 0, 0)
+            border_color_display.config(bg="#000000")
+            fill_color_display.config(bg="#ffffff")
+            font_color_display.config(bg="#000000")
+
+        ttk.Button(
+            button_frame, text="Save Settings", command=save_settings, width=15
+        ).pack(side=tk.LEFT, padx=5)
+        ttk.Button(
+            button_frame, text="Reset to Defaults", command=reset_to_defaults, width=18
+        ).pack(side=tk.LEFT, padx=5)
+        ttk.Button(
+            button_frame, text="Cancel", command=settings_window.destroy, width=12
+        ).pack(side=tk.LEFT, padx=5)
 
     def update_fields_list(self):
         self.fields_listbox.delete(0, tk.END)
