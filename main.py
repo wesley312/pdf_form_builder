@@ -123,7 +123,7 @@ class PDFFormBuilder:
         instructions.pack(padx=10, pady=5)
         instructions.insert(
             "1.0",
-            "1. Open a PDF file\n2. Select field type\n3. Click and drag on PDF to create field\n4. Select field from list to customize\n5. Save to create fillable PDF",
+            "1. Open a PDF file\n2. Select field type\n3. Click and drag on PDF to create field\n4. Click on field to edit properties\n5. Select from list to edit\n6. Save to create fillable PDF",
         )
         instructions.config(state=tk.DISABLED)
 
@@ -384,7 +384,8 @@ class PDFFormBuilder:
                 # Highlight selected field
                 width = 3 if i == self.selected_field_idx else 2
 
-                self.canvas.create_rectangle(
+                # Create clickable rectangle with tag
+                rect_id = self.canvas.create_rectangle(
                     x0_c,
                     y0_c,
                     x1_c,
@@ -394,13 +395,77 @@ class PDFFormBuilder:
                     tags=f"field_{i}",
                 )
 
+                # Bind click event to the rectangle
+                self.canvas.tag_bind(
+                    f"field_{i}",
+                    "<Button-1>",
+                    lambda event, idx=i: self.select_field_from_canvas(idx),
+                )
+
     def on_mouse_press(self, event):
         if not self.pdf_doc:
             return
-        self.selection_start = (
-            self.canvas.canvasx(event.x),
-            self.canvas.canvasy(event.y),
-        )
+
+        # Check if clicking on an existing field
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+
+        clicked_field_idx = self.get_field_at_position(x, y)
+
+        if clicked_field_idx is not None:
+            # Clicking on existing field - select it
+            self.select_field_from_canvas(clicked_field_idx)
+            # Don't start new field creation
+            self.selection_start = None
+        else:
+            # Start creating new field
+            self.selection_start = (x, y)
+
+    def get_field_at_position(self, canvas_x, canvas_y):
+        """Get the index of the field at the given canvas position"""
+        if not self.pdf_doc:
+            return None
+
+        mat = fitz.Matrix(150 / 72, 150 / 72)
+
+        # Convert canvas coordinates to PDF coordinates
+        pdf_x = canvas_x / mat.a
+        pdf_y = canvas_y / mat.d
+
+        # Check fields in reverse order (top fields first)
+        for i in range(len(self.fields) - 1, -1, -1):
+            field = self.fields[i]
+            if field.page_num == self.current_page:
+                x0, y0, x1, y1 = field.rect
+                if x0 <= pdf_x <= x1 and y0 <= pdf_y <= y1:
+                    return i
+
+        return None
+
+    def select_field_from_canvas(self, field_idx):
+        """Select a field by clicking on it in the canvas"""
+        self.selected_field_idx = field_idx
+
+        # Update listbox selection
+        self.fields_listbox.selection_clear(0, tk.END)
+        self.fields_listbox.selection_set(field_idx)
+        self.fields_listbox.see(field_idx)
+
+        # Update properties panel
+        field = self.fields[field_idx]
+        self.field_name_var.set(field.name)
+        self.border_width_var.set(str(field.border_width))
+        self.font_size_var.set(str(field.font_size))
+
+        # Update color buttons
+        self.border_color_btn.config(bg=self.rgb_to_hex(field.border_color))
+        self.fill_color_btn.config(bg=self.rgb_to_hex(field.fill_color))
+        self.font_color_btn.config(bg=self.rgb_to_hex(field.font_color))
+
+        self.info_label.config(text=f"Editing: {field.name} ({field.field_type})")
+
+        # Redraw to highlight selected field
+        self.render_page()
 
     def on_mouse_drag(self, event):
         if not self.pdf_doc or not self.selection_start:
@@ -419,7 +484,11 @@ class PDFFormBuilder:
         )
 
     def on_mouse_release(self, event):
-        if not self.pdf_doc or not self.selection_start:
+        if not self.pdf_doc:
+            return
+
+        # Only create field if we started a selection (not clicking on existing field)
+        if not self.selection_start:
             return
 
         self.canvas.delete("temp_rect")
@@ -427,6 +496,11 @@ class PDFFormBuilder:
         x0, y0 = self.selection_start
         x1 = self.canvas.canvasx(event.x)
         y1 = self.canvas.canvasy(event.y)
+
+        # Check if this was just a click (no drag) - ignore it
+        if abs(x1 - x0) < 5 and abs(y1 - y0) < 5:
+            self.selection_start = None
+            return
 
         # Ensure x0 < x1 and y0 < y1
         if x0 > x1:
